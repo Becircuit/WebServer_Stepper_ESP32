@@ -1,0 +1,149 @@
+/* 
+ Arduino Controller:
+   ESP32           Component           
+    D32  ------->   dir pin stepper motor     
+    D33  ------->   Step pin stepper motor 
+    D23  ------->   Enable pin stepper motor 
+
+*/
+
+//===Motors definitions===
+const int dirPin = 32;
+const int stepPin = 33;
+const int enPin = 23;
+
+unsigned long timeStep = 0;
+int setStep = 0;
+int currentStep = 0;
+int lastStep = 0;
+int factorStep = 1;
+const int speedM = 2000;  
+const int totalSteps = 200;
+int degree=0;
+
+//===Web server definitions===
+#include <Arduino.h>
+#ifdef ESP32
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#else
+#include <ESP8266WiFi.h>
+#include <ESPAsyncTCP.h>
+#endif
+#include <ESPAsyncWebServer.h>
+
+AsyncWebServer server(80);
+
+// REPLACE WITH YOUR NETWORK CREDENTIALS
+const char* ssid = "your ssid";
+const char* password = "your pswd";
+
+const char* PARAM_INPUT_1 = "input1";
+
+// HTML web page to handle 3 input fields (input1, input2, input3)
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html><head>
+  <title>ESP Input Form</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  </head><body>
+  <form action="/get">
+    Degree: <input type="text" name="input1">
+    <input type="submit" value="Submit">
+  </form><br>
+  </form>
+</body></html>)rawliteral";
+
+void notFound(AsyncWebServerRequest* request) {
+  request->send(404, "text/plain", "Not found");
+}
+
+
+void setup() {
+ Serial.begin(115200);  //initialize the serial transmition at 115200 bauds
+
+ //===Motors initialization===
+  pinMode(dirPin, OUTPUT);
+  pinMode(stepPin, OUTPUT);
+  pinMode(enPin, OUTPUT);
+
+  digitalWrite(enPin,HIGH);
+
+  //===Web server initialization===
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+    Serial.println("WiFi Failed!");
+    return;
+  }
+  Serial.println();
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  // Send web page with input fields to client
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send_P(200, "text/html", index_html);
+  });
+
+  // Send a GET request to <ESP_IP>/get?input1=<inputMessage>
+  server.on("/get", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String inputMessage;
+    String inputParam;
+    // GET input1 value on <ESP_IP>/get?input1=<inputMessage>
+    if (request->hasParam(PARAM_INPUT_1)) {
+      inputMessage = request->getParam(PARAM_INPUT_1)->value();
+      inputParam = PARAM_INPUT_1;
+      degree = inputMessage.toInt();    
+      controlMotor();
+    } else {
+      inputMessage = "No message sent";
+      inputParam = "none";
+    }
+    Serial.println(inputMessage);
+    request->send(200, "text/html", "Sent to ESP degree: " + inputMessage + "<br><a href=\"/\">Enter a new value</a>");
+  });
+  server.onNotFound(notFound);
+  server.begin();
+
+}
+
+void loop() {
+  
+
+}
+
+void controlMotor() {  
+
+  setStep = degree * totalSteps / 360.0;
+
+  if (setStep > currentStep) {
+    digitalWrite(dirPin, HIGH);
+    factorStep = 1;
+  } else {
+    digitalWrite(dirPin, LOW);
+    factorStep = -1;
+  }
+
+  digitalWrite(enPin,LOW);
+
+  while (currentStep != setStep) {
+    if (micros() - timeStep > (speedM - 20) && digitalRead(stepPin) == LOW) {
+
+      digitalWrite(stepPin, HIGH);
+
+      currentStep += factorStep;
+
+      timeStep = micros();
+    } else if (micros() - timeStep > 20 && digitalRead(stepPin) == HIGH) {
+
+      digitalWrite(stepPin, LOW);
+
+      timeStep = micros();
+    }
+
+  }
+
+  lastStep = currentStep;
+  digitalWrite(stepPin, LOW);
+  digitalWrite(enPin,HIGH);
+ 
+}
